@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 
 // ✅ CORS Setup for React Frontend (withCredentials)
 app.use(cors({
-    origin: 'http://localhost:5173', // React App URL
+    origin: ['http://localhost:5173', 'https://bogurabashi.netlify.app', 'https://bogurabashi.com'], // Development
     credentials: true
 }));
 app.use(express.json());
@@ -44,8 +44,8 @@ function verifyToken(req, res, next) {
 
 async function run() {
     try {
-        await client.connect();
-        console.log("✅ MongoDB Connected");
+        // await client.connect();
+        // console.log("✅ MongoDB Connected");
         //All Collections
         const db = client.db("bogurabashi");
         const donorsCollection = db.collection("donors");
