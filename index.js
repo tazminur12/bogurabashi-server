@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 
 // ✅ CORS Setup for React Frontend (withCredentials)
 app.use(cors({
-    origin: ['http://localhost:5173', 'https://bogurabashi.netlify.app', 'https://bogurabashi.com'], // Development
+    origin: ['http://localhost:5173', 'https://bogurabashi-web.vercel.app', 'https://bogurabashi.com'], // Development
     credentials: true
 }));
 app.use(express.json());
@@ -80,6 +80,8 @@ async function run() {
         const slidersCollection = db.collection('sliders');
         const partnersCollection = db.collection('partners');
         const disasterReportsCollection = db.collection('disaster-reports');
+        const candidatesCollection = db.collection('candidates');
+        const pollsCollection = db.collection('polls');
 
         // ✅ Root Endpoint
         app.get("/", (req, res) => {
@@ -2343,6 +2345,523 @@ app.get('/disaster-reports', async (req, res) => {
       res.status(500).json({ message: 'Failed to delete report', error });
     }
   });
+
+  // ✅ Candidates CRUD Endpoints
+  
+  // GET - All candidates
+  app.get('/candidates', async (req, res) => {
+    try {
+      const candidates = await candidatesCollection.find().sort({ createdAt: -1 }).toArray();
+      res.json(candidates);
+    } catch (error) {
+      console.error('Error fetching candidates:', error);
+      res.status(500).json({ message: 'Failed to fetch candidates', error });
+    }
+  });
+
+  // GET - Single candidate by ID
+  app.get('/candidates/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid candidate ID' });
+      }
+      const candidate = await candidatesCollection.findOne({ _id: new ObjectId(id) });
+      if (!candidate) {
+        return res.status(404).json({ message: 'Candidate not found' });
+      }
+      res.json(candidate);
+    } catch (error) {
+      console.error('Error fetching candidate:', error);
+      res.status(500).json({ message: 'Failed to fetch candidate', error });
+    }
+  });
+
+  // POST - Create new candidate
+  app.post('/candidates', async (req, res) => {
+    try {
+      const candidateData = req.body;
+      const timestamp = new Date().toISOString();
+      
+      // Validate required fields
+      if (!candidateData.name || !candidateData.constituency) {
+        return res.status(400).json({ message: 'Name and constituency are required' });
+      }
+
+      // Set timestamps
+      candidateData.createdAt = timestamp;
+      candidateData.updatedAt = timestamp;
+      
+      // Set default status if not provided
+      if (!candidateData.status) {
+        candidateData.status = 'Active';
+      }
+
+      const result = await candidatesCollection.insertOne(candidateData);
+      res.status(201).json({
+        message: 'Candidate created successfully',
+        insertedId: result.insertedId,
+        candidate: { ...candidateData, _id: result.insertedId }
+      });
+    } catch (error) {
+      console.error('Error creating candidate:', error);
+      res.status(500).json({ message: 'Failed to create candidate', error });
+    }
+  });
+
+  // PUT - Update candidate by ID
+  app.put('/candidates/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid candidate ID' });
+      }
+
+      const updateData = req.body;
+      const timestamp = new Date().toISOString();
+      
+      // Update the updatedAt timestamp
+      updateData.updatedAt = timestamp;
+
+      // Remove _id from update data if present (can't update _id)
+      delete updateData._id;
+
+      const result = await candidatesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateData }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ message: 'Candidate not found' });
+      }
+
+      res.json({
+        message: 'Candidate updated successfully',
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      });
+    } catch (error) {
+      console.error('Error updating candidate:', error);
+      res.status(500).json({ message: 'Failed to update candidate', error });
+    }
+  });
+
+  // DELETE - Remove candidate by ID
+  app.delete('/candidates/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid candidate ID' });
+      }
+
+      const result = await candidatesCollection.deleteOne({ _id: new ObjectId(id) });
+      
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ message: 'Candidate not found' });
+      }
+
+      res.json({
+        message: 'Candidate deleted successfully',
+        deletedCount: result.deletedCount
+      });
+    } catch (error) {
+      console.error('Error deleting candidate:', error);
+      res.status(500).json({ message: 'Failed to delete candidate', error });
+    }
+  });
+
+  // GET - Opinions for a specific candidate
+  app.get('/candidates/:id/opinions', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid candidate ID' });
+      }
+
+      const candidate = await candidatesCollection.findOne(
+        { _id: new ObjectId(id) },
+        { projection: { opinions: 1 } }
+      );
+
+      if (!candidate) {
+        return res.status(404).json({ message: 'Candidate not found' });
+      }
+
+      res.json(candidate.opinions || []);
+    } catch (error) {
+      console.error('Error fetching opinions:', error);
+      res.status(500).json({ message: 'Failed to fetch opinions', error });
+    }
+  });
+
+  // POST - Add a new opinion to a specific candidate (public, no approval)
+  app.post('/candidates/:id/opinions', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid candidate ID' });
+      }
+
+      const { text, author } = req.body || {};
+      if (!text || typeof text !== 'string' || !text.trim()) {
+        return res.status(400).json({ message: 'Opinion text is required' });
+      }
+
+      const newOpinion = {
+        _id: new ObjectId(),
+        text: text.trim(),
+        author: author && String(author).trim() ? String(author).trim() : null,
+        createdAt: new Date().toISOString()
+      };
+
+      const result = await candidatesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $push: { opinions: newOpinion } }
+      );
+
+      if (result.modifiedCount === 0) {
+        return res.status(404).json({ message: 'Candidate not found' });
+      }
+
+      res.status(201).json(newOpinion);
+    } catch (error) {
+      console.error('Error adding opinion:', error);
+      res.status(500).json({ message: 'Failed to add opinion', error });
+    }
+  });
+
+  // ✅ Polls CRUD Endpoints (Optimized for Quick Results)
+  
+  // GET - All polls (with optional status filter for quick access)
+  app.get('/polls', async (req, res) => {
+    try {
+      const { status, category } = req.query;
+      let query = {};
+      
+      if (status) {
+        query.status = status;
+      }
+      if (category) {
+        query.category = category;
+      }
+
+      const polls = await pollsCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .toArray();
+      
+      res.json(polls);
+    } catch (error) {
+      console.error('Error fetching polls:', error);
+      res.status(500).json({ message: 'Failed to fetch polls', error });
+    }
+  });
+
+  // GET - Polls summary/analytics (place before dynamic :id routes)
+  app.get('/polls/summary', async (req, res) => {
+    try {
+      const totalPolls = await pollsCollection.countDocuments();
+      const polls = await pollsCollection.find({}).toArray();
+      const totalVotes = polls.reduce((sum, p) => sum + (p.votes || 0), 0);
+      const activePolls = polls.filter(p => p.status === 'Active').length;
+      const topPoll = polls
+        .slice()
+        .sort((a, b) => (b.votes || 0) - (a.votes || 0))[0];
+
+      res.json({
+        totalPolls,
+        totalVotes,
+        activePolls,
+        topPoll: topPoll ? {
+          question: topPoll.question,
+          votes: topPoll.votes || 0
+        } : null
+      });
+    } catch (error) {
+      console.error('Error fetching polls summary:', error);
+      res.status(500).json({ message: 'Failed to fetch polls summary', error });
+    }
+  });
+
+  // GET - Single poll by ID (with full stats)
+  app.get('/polls/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid poll ID' });
+      }
+      
+      const poll = await pollsCollection.findOne({ _id: new ObjectId(id) });
+      
+      if (!poll) {
+        return res.status(404).json({ message: 'Poll not found' });
+      }
+      
+      res.json(poll);
+    } catch (error) {
+      console.error('Error fetching poll:', error);
+      res.status(500).json({ message: 'Failed to fetch poll', error });
+    }
+  });
+
+  // GET - Quick poll results/stats by ID (optimized for fast retrieval)
+  app.get('/polls/:id/results', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid poll ID' });
+      }
+      
+      const poll = await pollsCollection.findOne(
+        { _id: new ObjectId(id) },
+        { 
+          projection: { 
+            question: 1,
+            description: 1,
+            category: 1,
+            status: 1,
+            votes: 1,
+            optionStats: 1,
+            createdAt: 1
+          }
+        }
+      );
+      
+      if (!poll) {
+        return res.status(404).json({ message: 'Poll not found' });
+      }
+      
+      // Calculate percentages for quick response
+      const totalVotes = poll.votes || 0;
+      const statsWithPercent = poll.optionStats?.map(op => ({
+        ...op,
+        percent: totalVotes > 0 ? Math.round((op.votes * 100) / totalVotes) : 0
+      })) || [];
+      
+      res.json({
+        question: poll.question,
+        description: poll.description,
+        category: poll.category,
+        status: poll.status,
+        totalVotes: totalVotes,
+        optionStats: statsWithPercent,
+        createdAt: poll.createdAt
+      });
+    } catch (error) {
+      console.error('Error fetching poll results:', error);
+      res.status(500).json({ message: 'Failed to fetch poll results', error });
+    }
+  });
+
+  // POST - Create new poll
+  app.post('/polls', async (req, res) => {
+    try {
+      const pollData = req.body;
+      const timestamp = new Date().toISOString();
+      
+      // Validate required fields
+      if (!pollData.question || !pollData.options || pollData.options.length < 2) {
+        return res.status(400).json({ 
+          message: 'Question and at least 2 options are required' 
+        });
+      }
+
+      // Initialize poll data
+      const trimmedOptions = pollData.options.map(o => o.trim()).filter(Boolean);
+      
+      const newPoll = {
+        question: pollData.question.trim(),
+        description: pollData.description || '',
+        options: trimmedOptions,
+        category: pollData.category || '',
+        status: pollData.status || 'Active',
+        startDate: pollData.startDate || '',
+        endDate: pollData.endDate || '',
+        startDateTime: pollData.startDateTime || '',
+        endDateTime: pollData.endDateTime || '',
+        allowMultipleVotes: pollData.allowMultipleVotes || false,
+        settings: pollData.settings || {
+          votesPerUser: 1,
+          autoCloseOnEnd: true,
+          allowAnonymous: false,
+          adminOnly: false,
+        },
+        votes: 0,
+        optionStats: trimmedOptions.map(label => ({ label, votes: 0 })),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+
+      const result = await pollsCollection.insertOne(newPoll);
+      
+      res.status(201).json({
+        message: 'Poll created successfully',
+        insertedId: result.insertedId,
+        poll: { ...newPoll, _id: result.insertedId }
+      });
+    } catch (error) {
+      console.error('Error creating poll:', error);
+      res.status(500).json({ message: 'Failed to create poll', error });
+    }
+  });
+
+  // PUT - Update poll by ID
+  app.put('/polls/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid poll ID' });
+      }
+
+      const updateData = req.body;
+      const timestamp = new Date().toISOString();
+      
+      // Update the updatedAt timestamp
+      updateData.updatedAt = timestamp;
+
+      // If options are being updated, recalculate optionStats
+      if (updateData.options && Array.isArray(updateData.options)) {
+        const trimmedOptions = updateData.options.map(o => o.trim()).filter(Boolean);
+        updateData.options = trimmedOptions;
+        
+        // Get current poll to preserve votes
+        const currentPoll = await pollsCollection.findOne({ _id: new ObjectId(id) });
+        if (currentPoll) {
+          // Merge existing votes with new options
+          const existingStats = currentPoll.optionStats || [];
+          updateData.optionStats = trimmedOptions.map(label => {
+            const existing = existingStats.find(s => s.label === label);
+            return existing || { label, votes: 0 };
+          });
+        } else {
+          updateData.optionStats = trimmedOptions.map(label => ({ label, votes: 0 }));
+        }
+      }
+
+      // Remove _id from update data if present
+      delete updateData._id;
+
+      const result = await pollsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateData }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ message: 'Poll not found' });
+      }
+
+      res.json({
+        message: 'Poll updated successfully',
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      });
+    } catch (error) {
+      console.error('Error updating poll:', error);
+      res.status(500).json({ message: 'Failed to update poll', error });
+    }
+  });
+
+  // POST - Vote on a poll (quick vote endpoint)
+  app.post('/polls/:id/vote', async (req, res) => {
+    try {
+      const id = req.params.id;
+      const { optionIndex, optionLabel } = req.body;
+      
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid poll ID' });
+      }
+
+      const poll = await pollsCollection.findOne({ _id: new ObjectId(id) });
+      
+      if (!poll) {
+        return res.status(404).json({ message: 'Poll not found' });
+      }
+
+      if (poll.status !== 'Active') {
+        return res.status(400).json({ message: 'Poll is not active' });
+      }
+
+      // Find the option to vote for
+      let targetOption = null;
+      if (optionIndex !== undefined && poll.optionStats[optionIndex]) {
+        targetOption = poll.optionStats[optionIndex];
+      } else if (optionLabel && poll.optionStats) {
+        targetOption = poll.optionStats.find(op => op.label === optionLabel);
+      }
+
+      if (!targetOption) {
+        return res.status(400).json({ message: 'Invalid option' });
+      }
+
+      // Update votes
+      const updatedStats = poll.optionStats.map(op => {
+        if (op.label === targetOption.label) {
+          return { ...op, votes: (op.votes || 0) + 1 };
+        }
+        return op;
+      });
+
+      const totalVotes = (poll.votes || 0) + 1;
+
+      const result = await pollsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { 
+          $set: { 
+            votes: totalVotes,
+            optionStats: updatedStats,
+            updatedAt: new Date().toISOString()
+          } 
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ message: 'Poll not found' });
+      }
+
+      // Return updated stats with percentages for quick display
+      const statsWithPercent = updatedStats.map(op => ({
+        ...op,
+        percent: totalVotes > 0 ? Math.round((op.votes * 100) / totalVotes) : 0
+      }));
+
+      res.json({
+        message: 'Vote recorded successfully',
+        totalVotes: totalVotes,
+        optionStats: statsWithPercent
+      });
+    } catch (error) {
+      console.error('Error recording vote:', error);
+      res.status(500).json({ message: 'Failed to record vote', error });
+    }
+  });
+
+  // DELETE - Remove poll by ID
+  app.delete('/polls/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid poll ID' });
+      }
+
+      const result = await pollsCollection.deleteOne({ _id: new ObjectId(id) });
+      
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ message: 'Poll not found' });
+      }
+
+      res.json({
+        message: 'Poll deleted successfully',
+        deletedCount: result.deletedCount
+      });
+    } catch (error) {
+      console.error('Error deleting poll:', error);
+      res.status(500).json({ message: 'Failed to delete poll', error });
+    }
+  });
+
+  
+
+  
   
   
 
