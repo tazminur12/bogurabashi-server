@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 
 // ✅ CORS Setup for React Frontend (withCredentials)
 app.use(cors({
-    origin: ['http://localhost:5173', 'https://bogurabashi-web.vercel.app', 'https://www.bogurabashi.com'], // Development
+    origin: ['http://localhost:5173', 'https://bogurabashi-web.vercel.app', "https://bogurabashi.com", 'https://www.bogurabashi.com'], // Development
     credentials: true
 }));
 app.use(express.json());
