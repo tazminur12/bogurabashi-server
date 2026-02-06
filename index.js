@@ -82,6 +82,7 @@ async function run() {
         const disasterReportsCollection = db.collection('disaster-reports');
         const candidatesCollection = db.collection('candidates');
         const pollsCollection = db.collection('polls');
+        const electionResultsCollection = db.collection('electionResults');
 
         // ✅ Root Endpoint
         app.get("/", (req, res) => {
@@ -2856,6 +2857,183 @@ app.get('/disaster-reports', async (req, res) => {
     } catch (error) {
       console.error('Error deleting poll:', error);
       res.status(500).json({ message: 'Failed to delete poll', error });
+    }
+  });
+
+
+  // ✅ Election Results CRUD Endpoints
+
+  // GET - All election results
+  app.get('/election/results', async (req, res) => {
+    try {
+      const results = await electionResultsCollection.find().sort({ createdAt: -1 }).toArray();
+      res.json(results);
+    } catch (error) {
+      console.error('Error fetching election results:', error);
+      res.status(500).json({ message: 'Failed to fetch election results', error });
+    }
+  });
+
+  // GET - Election Results Summary
+  app.get('/election/results/summary', async (req, res) => {
+    try {
+      const results = await electionResultsCollection.find().toArray();
+      
+      // Calculate total stats
+      const totalCenters = results.length;
+      const totalVoters = results.reduce((sum, r) => sum + (parseInt(r.totalVoters) || 0), 0);
+      const castedVotes = results.reduce((sum, r) => sum + (parseInt(r.castedVotes) || 0), 0);
+      
+      // Aggregate by constituency
+      const byConstituency = {};
+      results.forEach(r => {
+        if (!byConstituency[r.constituency]) {
+          byConstituency[r.constituency] = {
+            name: r.constituency,
+            centers: 0,
+            voters: 0,
+            casted: 0,
+            leadingCandidate: null
+          };
+        }
+        byConstituency[r.constituency].centers += 1;
+        byConstituency[r.constituency].voters += (parseInt(r.totalVoters) || 0);
+        byConstituency[r.constituency].casted += (parseInt(r.castedVotes) || 0);
+      });
+
+      // Aggregate candidates globally (simplified)
+      const allCandidates = {};
+      results.forEach(r => {
+        if (r.candidates && Array.isArray(r.candidates)) {
+          r.candidates.forEach(c => {
+            const key = `${c.name}-${c.party}`;
+            if (!allCandidates[key]) {
+              allCandidates[key] = {
+                name: c.name,
+                party: c.party,
+                votes: 0
+              };
+            }
+            allCandidates[key].votes += (parseInt(c.votes) || 0);
+          });
+        }
+      });
+      
+      const topCandidates = Object.values(allCandidates).sort((a, b) => b.votes - a.votes).slice(0, 5);
+
+      res.json({
+        totalCenters,
+        totalVoters,
+        castedVotes,
+        byConstituency: Object.values(byConstituency),
+        topCandidates
+      });
+    } catch (error) {
+      console.error('Error fetching summary:', error);
+      res.status(500).json({ message: 'Failed to fetch summary', error });
+    }
+  });
+
+  // GET - Single election result by ID
+  app.get('/election/results/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid ID' });
+      }
+      const result = await electionResultsCollection.findOne({ _id: new ObjectId(id) });
+      if (!result) {
+        return res.status(404).json({ message: 'Result not found' });
+      }
+      res.json(result);
+    } catch (error) {
+      console.error('Error fetching result:', error);
+      res.status(500).json({ message: 'Failed to fetch result', error });
+    }
+  });
+
+  // POST - Add new election result
+  app.post('/election/results', async (req, res) => {
+    try {
+      const data = req.body;
+      data.createdAt = new Date().toISOString();
+      // Ensure numeric values
+      data.totalVoters = parseInt(data.totalVoters) || 0;
+      data.castedVotes = parseInt(data.castedVotes) || 0;
+      if (data.candidates && Array.isArray(data.candidates)) {
+        data.candidates = data.candidates.map(c => ({
+            ...c,
+            votes: parseInt(c.votes) || 0
+        }));
+      }
+
+      const result = await electionResultsCollection.insertOne(data);
+      res.status(201).json({
+        message: 'Result added successfully',
+        insertedId: result.insertedId
+      });
+    } catch (error) {
+      console.error('Error adding result:', error);
+      res.status(500).json({ message: 'Failed to add result', error });
+    }
+  });
+
+  // PUT - Update election result
+  app.put('/election/results/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid ID' });
+      }
+      
+      const data = req.body;
+      delete data._id; // prevent _id update
+      data.updatedAt = new Date().toISOString();
+      
+      // Ensure numeric values
+      if (data.totalVoters) data.totalVoters = parseInt(data.totalVoters) || 0;
+      if (data.castedVotes) data.castedVotes = parseInt(data.castedVotes) || 0;
+      if (data.candidates && Array.isArray(data.candidates)) {
+        data.candidates = data.candidates.map(c => ({
+            ...c,
+            votes: parseInt(c.votes) || 0
+        }));
+      }
+
+      const result = await electionResultsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: data }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ message: 'Result not found' });
+      }
+
+      res.json({ message: 'Result updated successfully' });
+    } catch (error) {
+      console.error('Error updating result:', error);
+      res.status(500).json({ message: 'Failed to update result', error });
+    }
+  });
+
+  // DELETE - Delete election result
+  app.delete('/election/results/:id', async (req, res) => {
+    try {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid ID' });
+      }
+
+      const result = await electionResultsCollection.deleteOne({ _id: new ObjectId(id) });
+      
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ message: 'Result not found' });
+      }
+
+      res.json({ message: 'Result deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting result:', error);
+      res.status(500).json({ message: 'Failed to delete result', error });
     }
   });
 
